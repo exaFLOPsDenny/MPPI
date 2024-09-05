@@ -23,7 +23,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-
+from MPPIController import MPPIController
+from VehicleModel import VehicleModel
 # Utility functions
 
 def plot_obstacles(obstacles):
@@ -39,34 +40,6 @@ def plot_state(state, style):
     delta_x, delta_y = np.cos(phi) * 0.5, np.sin(phi) * 0.5
     plt.quiver(x, y, delta_x, delta_y)
 
-# Placeholder classes for VehicleModel and MPPIController
-class VehicleModel:
-    def step(self, action, dt, car_state):
-        # Dummy implementation - replace with actual vehicle model
-        new_state = car_state + action * dt
-        return new_state
-
-class MPPIController:
-    def __init__(self, lambda_, cov, nu, R, horizon, n_samples, car, dt, goal_state, obstacles):
-        # Initialize with given parameters
-        self.lambda_ = lambda_
-        self.cov = cov
-        self.nu = nu
-        self.R = R
-        self.horizon = horizon
-        self.n_samples = n_samples
-        self.car = car
-        self.dt = dt
-        self.goal_state = goal_state
-        self.obstacles = obstacles
-
-    def get_action(self, car_state):
-        # Dummy action generation - replace with actual controller logic
-        return np.random.randn(len(car_state)) * 0.1
-
-    def plot_rollouts(self, fig):
-        # Dummy implementation for plotting rollouts
-        pass
 
 # Param definition
 n_samples = 400    # Number of rollout trajectories
