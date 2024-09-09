@@ -54,7 +54,7 @@ init_state = np.array([0, 0, 0, 0, 0])  # x, y, phi, v, steer
 goal_state = np.array([6, 6, 0])
 
 # Define environment - obstacles [x, y, radius]
-n_obstacles = 40
+n_obstacles = 10
 obstacles = np.hstack((np.random.rand(n_obstacles, 2) * 4 + 1, 0.2 * np.ones((n_obstacles, 1))))
 
 # Init
