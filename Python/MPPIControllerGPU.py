@@ -1,3 +1,4 @@
+import torch
 import cupy as np  # Replace numpy with cupy
 import matplotlib.pyplot as plt
 
@@ -27,52 +28,52 @@ class MPPIController:
         self.max_vel = 5
         self.max_steer = 0.5
 
-def get_action(self, state):
-    # Initialize tensors on GPU
-    self.state = torch.tensor(state, device='cuda')
-    init_state = torch.tensor(state, device='cuda')
+    def get_action(self, state):
+        # Initialize tensors on GPU
+        self.state = torch.tensor(state, device='cuda')
+        init_state = torch.tensor(state, device='cuda')
     
-    states = torch.zeros((self.n_states, self.horizon + 1), device='cuda')
-    S = torch.zeros(self.n_samples, device='cuda')
+        states = torch.zeros((self.n_states, self.horizon + 1), device='cuda')
+        S = torch.zeros(self.n_samples, device='cuda')
 
-    self.rollouts_states = torch.zeros((self.n_samples, self.horizon + 1, self.n_states), device='cuda')
-    self.rollouts_costs = torch.zeros(self.n_samples, device='cuda')
+        self.rollouts_states = torch.zeros((self.n_samples, self.horizon + 1, self.n_states), device='cuda')
+        self.rollouts_costs = torch.zeros(self.n_samples, device='cuda')
 
-    # Generate random control input disturbances on GPU
-    delta_u_vel = torch.normal(0, self.cov[0], (self.n_samples, self.horizon), device='cuda')
-    delta_u_steer = torch.normal(0, self.cov[1], (self.n_samples, self.horizon), device='cuda')
-    delta_u_steer = torch.clamp(delta_u_steer, -0.5, 0.5)
+        # Generate random control input disturbances on GPU
+        delta_u_vel = torch.normal(0, self.cov[0], (self.n_samples, self.horizon), device='cuda')
+        delta_u_steer = torch.normal(0, self.cov[1], (self.n_samples, self.horizon), device='cuda')
+        delta_u_steer = torch.clamp(delta_u_steer, -0.5, 0.5)
 
-    delta_u = torch.stack((delta_u_vel, delta_u_steer), dim=0)
+        delta_u = torch.stack((delta_u_vel, delta_u_steer), dim=0)
 
-    # Simulate rollouts in parallel
-    for k in range(self.n_samples):
-        states[:, 0] = init_state
+        # Simulate rollouts in parallel
+        for k in range(self.n_samples):
+            states[:, 0] = init_state
+            for i in range(self.horizon):
+                states[:, i + 1] = self.model.step(self.control_sequence[:, i] + delta_u[:, k, i], self.dt, states[:, i])
+                S[k] += self.cost_function(states[:, i + 1], self.control_sequence[:, i], delta_u[:, k, i])
+
+            self.rollouts_states[k, :, :] = states.T
+            self.rollouts_costs[k] = S[k]
+
+        # Normalize costs and update control sequence
+        S_normalized = S - torch.min(S)
         for i in range(self.horizon):
-            states[:, i + 1] = self.model.step(self.control_sequence[:, i] + delta_u[:, k, i], self.dt, states[:, i])
-            S[k] += self.cost_function(states[:, i + 1], self.control_sequence[:, i], delta_u[:, k, i])
+            self.control_sequence[:, i] += self.total_entropy(delta_u[:, :, i].T, S_normalized)
 
-        self.rollouts_states[k, :, :] = states.T
-        self.rollouts_costs[k] = S[k]
+        # Saturate control output
+        self.control_sequence[0, self.control_sequence[0, :] > self.max_vel] = self.max_vel
+        self.control_sequence[0, self.control_sequence[0, :] < -self.max_vel] = -self.max_vel
 
-    # Normalize costs and update control sequence
-    S_normalized = S - torch.min(S)
-    for i in range(self.horizon):
-        self.control_sequence[:, i] += self.total_entropy(delta_u[:, :, i].T, S_normalized)
+        self.control_sequence[1, self.control_sequence[1, :] > self.max_steer] = self.max_steer
+        self.control_sequence[1, self.control_sequence[1, :] < -self.max_steer] = -self.max_steer
 
-    # Saturate control output
-    self.control_sequence[0, self.control_sequence[0, :] > self.max_vel] = self.max_vel
-    self.control_sequence[0, self.control_sequence[0, :] < -self.max_vel] = -self.max_vel
+        # Select control action
+        self.optimized_control_sequence = self.control_sequence.clone()
+        action = self.control_sequence[:, 0]
+        self.control_sequence = torch.cat((self.control_sequence[:, 1:], torch.zeros((2, 1), device='cuda')), dim=1)
 
-    self.control_sequence[1, self.control_sequence[1, :] > self.max_steer] = self.max_steer
-    self.control_sequence[1, self.control_sequence[1, :] < -self.max_steer] = -self.max_steer
-
-    # Select control action
-    self.optimized_control_sequence = self.control_sequence.clone()
-    action = self.control_sequence[:, 0]
-    self.control_sequence = torch.cat((self.control_sequence[:, 1:], torch.zeros((2, 1), device='cuda')), dim=1)
-
-    return action.cpu().numpy()  # Returning the result as numpy array for further processing
+        return action.cpu().numpy()  # Returning the result as numpy array for further processing
 
     def cost_function(self, state, u, du):
         state_cost = self.state_cost_function(state)
