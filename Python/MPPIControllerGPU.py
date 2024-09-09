@@ -26,8 +26,6 @@ class MPPIController:
 
         self.max_vel = 5
         self.max_steer = 0.5
-    
- import torch
 
 def get_action(self, state):
     # Initialize tensors on GPU
