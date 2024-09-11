@@ -1,61 +1,56 @@
-# MIT License
-# 
-# Copyright (c) 2023 Roman Adámek
-# 
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-# 
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from MPPIController import MPPIController
+from matplotlib.animation import FuncAnimation
+from MPPIControllerGPU import MPPIController
 from VehicleModel import VehicleModel
-# Utility functions
+import io
 
+# Utility functions
 def plot_obstacles(obstacles):
     for obs in obstacles:
         r = obs[2]
-        pos = [obs[0] - r, obs[1] - r, 2 * r, 2 * r]
         rect = Rectangle((obs[0] - r, obs[1] - r), 2 * r, 2 * r, linewidth=0, edgecolor='none', facecolor='k', zorder=1)
         plt.gca().add_patch(rect)
 
 def plot_state(state, style):
-    x, y, phi = state[0], state[1], state[2]
+    # Convert state tensor to CPU if it is on GPU
+    if state.device.type == 'cuda':
+        state_cpu = state.cpu().numpy()
+    else:
+        state_cpu = state.numpy()
+
+    x, y, phi = state_cpu[0], state_cpu[1], state_cpu[2]
+
     plt.plot(x, y, style)
-    delta_x, delta_y = np.cos(phi) * 0.5, np.sin(phi) * 0.5
+
+    # Convert phi to a tensor if it's a float
+    phi_tensor = torch.tensor(phi, dtype=torch.float32) if isinstance(phi, (float, np.float32)) else phi
+
+    # Calculate delta_x and delta_y
+    delta_x = torch.cos(phi_tensor).item() * 0.5
+    delta_y = torch.sin(phi_tensor).item() * 0.5
+
+    # Use delta_x and delta_y in plt.quiver
     plt.quiver(x, y, delta_x, delta_y)
 
-
 # Param definition
-n_samples = 400    # Number of rollout trajectories
+n_samples = 1000    # Number of rollout trajectories
 horizon = 25       # Prediction horizon represented as number of steps
 lambda_ = 10       # Temperature - Selectiveness of trajectories by their costs
 nu = 500           # Exploration variance
-R = np.diag([1, 5])# Control weighting matrix
+R = torch.diag(torch.tensor([1, 5], dtype=torch.float32))  # Control weighting matrix
 cov = [1, 0.4]     # Variance of control inputs disturbance 
 dt = 0.1           # Time step of controller and simulation
 
-init_state = np.array([0, 0, 0, 0, 0])  # x, y, phi, v, steer
-goal_state = np.array([6, 6, 0])
+# Initialize state and goal
+init_state = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float32)  # x, y, phi, v, steer
+goal_state = torch.tensor([6, 6, 0], dtype=torch.float32)
 
 # Define environment - obstacles [x, y, radius]
 n_obstacles = 10
-obstacles = np.hstack((np.random.rand(n_obstacles, 2) * 4 + 1, 0.2 * np.ones((n_obstacles, 1))))
+obstacles = torch.cat((torch.rand(n_obstacles, 2) * 4 + 1, 0.2 * torch.ones(n_obstacles, 1)), dim=1)
 
 # Init
 car_real = VehicleModel()
@@ -63,49 +58,31 @@ car = VehicleModel()
 controller = MPPIController(lambda_, cov, nu, R, horizon, n_samples, car, dt, goal_state, obstacles)
 
 # Prepare visualization
-plt.figure()
-plt.axis('equal')
-plt.xlim([-0.5 + min(init_state[0], goal_state[0]), 0.5 + max(init_state[0], goal_state[0])])
-plt.ylim([-0.5 + min(init_state[1], goal_state[1]), 0.5 + max(init_state[1], goal_state[1])])
+fig, ax = plt.subplots()
+ax.set_xlim([-0.5 + min(init_state[0], goal_state[0]), 0.5 + max(init_state[0], goal_state[0])])
+ax.set_ylim([-0.5 + min(init_state[1], goal_state[1]), 0.5 + max(init_state[1], goal_state[1])])
 plot_state(init_state, 'bo')
 plot_state(goal_state, 'ro')
-plot_obstacles(obstacles)
+plot_obstacles(obstacles.cpu().numpy())  # Convert to NumPy for plotting
 
-# Control
+# Initialize state
 car_state = init_state
 
-import matplotlib.pyplot as plt
-import numpy as np
-import imageio
-import os
-
-# Initialize list to store frame filenames
-filenames = []
-
-for i in range(100):
+# Update function for animation
+def update(frame):
+    global car_state
+    ax.clear()
+    plot_obstacles(obstacles.cpu().numpy())  # Redraw obstacles
     action = controller.get_action(car_state)
-    controller.plot_rollouts(plt.gcf())
+    controller.plot_rollouts(fig)
     
     car_state = car_real.step(action, dt, car_state)
     plot_state(car_state, 'go')
-    
-    plt.draw()
-    plt.pause(0.1)
-    
-    # Save the current frame as a PNG file
-    filename = f'frame_{i}.png'
-    plt.savefig(filename)
-    filenames.append(filename)
 
-# After the loop, compile all the PNGs into a GIF
-with imageio.get_writer('Python/animation.gif', mode='I', duration=0.1) as writer:
-    for filename in filenames:
-        image = imageio.imread(filename)
-        writer.append_data(image)
+# Create animation
+ani = FuncAnimation(fig, update, frames=100, repeat=False, interval=100)
 
-# Optionally, remove the individual frame files to clean up
-for filename in filenames:
-    os.remove(filename)
+# Save animation as GIF
+ani.save('animation.gif', writer='pillow', fps=10)
 
 plt.show()
-
